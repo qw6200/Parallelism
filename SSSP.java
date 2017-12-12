@@ -28,14 +28,14 @@ class Parallel{
     private final Coordinator coordinator;
     private final int numVertices;
 
-    public Parallel(Surface S, Coordinator C, int NT, int NV){
+    public Parallel(Surface S, Coordinator C, int NT, int NV) {
         surface = S;
         coordinator = C;
         numThreads = NT;
         numVertices = NV;
     }
 
-    public void solve(){
+    public void solve() throws Coordinator.KilledException {
         // does all the work here (equivalent to run button)
         // create all the workers
 
@@ -73,12 +73,9 @@ class DeltaWorker extends Thread {
     // c.register() and c.unregister() properly.
     //
     public void run() {
-        try {
             c.register();
-            System.out.println("suck my clean gaping anus");
-            // s.DeltaSolve(vstart, range);
+            // s.DeltaSolve();
             c.unregister();
-        } catch(Coordinator.KilledException e) { }
     }
 
     // Constructor
@@ -89,7 +86,7 @@ class DeltaWorker extends Thread {
         startIndex = StartIndex;
         range = Range;
 
-        System.out.print("NEW WORKER: [" + startIndex + ", " + startIndex + range + "]");
+        System.out.print("NEW WORKER: [" + startIndex + ", " + (startIndex + range) + "]");
     }
 }
 
@@ -284,21 +281,19 @@ public class SSSP {
             // Execute the guts of the run button handler method here.
             long startTime = new Date().getTime();
             // try {
-            if (numThreads == 0) {
-                // try{
+
+            try{
+                if (numThreads == 0) {
                     s.DijkstraSolve();
-                // } catch(Coordinator.KilledException e){ }
-            } else {
+                } else {
                 // OUR CODE HERE
                 // 1. For numThreads, create workerthreads
                 // 2. Run worker threads with num vertices
                 final Coordinator c = new Coordinator();
                 Parallel parallel = new Parallel(s, c, numThreads, n);
                 parallel.solve();
-                
-                // s.DeltaSolve(0, vertices.length);
-            }
-            // } catch(Coordinator.KilledException e) { }
+                }
+            } catch(Coordinator.KilledException e) { }
             long endTime = new Date().getTime();
             System.out.printf("elapsed time: %.3f seconds\n",
                               (double) (endTime-startTime)/1000);
@@ -336,8 +331,7 @@ class Worker extends Thread {
             if (dijkstra) {
                 s.DijkstraSolve();
             } else {
-                System.out.println("suck my clean gaping anus");
-                s.DeltaSolve(vstart, range);
+                s.DeltaSolve();
             }
             c.unregister();
         } catch(Coordinator.KilledException e) { }
@@ -725,7 +719,7 @@ class Surface {
 
     // Main solver routine.
     //
-    public void DeltaSolve(int vstart, int range) throws Coordinator.KilledException {
+    public void DeltaSolve() throws Coordinator.KilledException {
         numBuckets = 2 * degree;
         delta = maxCoord / degree;
         // All buckets, together, cover a range of 2 * maxCoord,
@@ -735,7 +729,7 @@ class Surface {
         for (int i = 0; i < numBuckets; ++i) {
             buckets.add(new LinkedHashSet<Vertex>());
         }
-        buckets.get(0).add(vertices[vstart]);
+        buckets.get(0).add(vertices[0]);
         int i = 0;
         for (;;) {
             LinkedList<Vertex> removed = new LinkedList<Vertex>();
