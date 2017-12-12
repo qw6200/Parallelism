@@ -21,6 +21,50 @@ import javax.swing.*;
 import java.util.*;
 import java.lang.*;
 
+class DeltaThread extends Thread {
+    private final Surface s;
+    private final Coordinator c;
+    // private final UI u;
+    // private final Animation a;
+    // private final boolean dijkstra;     // Dijkstra = !Delta
+    private final int vstart;
+    private final int range;
+
+    // The run() method of a Java Thread is never invoked directly by
+    // user code.  Rather, it is called by the Java runtime when user
+    // code calls start().
+    //
+    // The run() method of a worker thread *must* begin by calling
+    // c.register() and end by calling c.unregister().  These allow the
+    // user interface (via the Coordinator) to pause and terminate
+    // workers.  Note how the worker is set up to catch KilledException.
+    // In the process of unwinding back to here we'll cleanly and
+    // automatically release any monitor locks.  If you create new kinds
+    // of workers (as part of a parallel solver), make sure they call
+    // c.register() and c.unregister() properly.
+    //
+    public void run() {
+        try {
+            c.register();
+            System.out.println("suck my clean gaping anus");
+            s.DeltaSolve(vstart, range);
+            c.unregister();
+        } catch(Coordinator.KilledException e) { }
+    }
+
+    // Constructor
+    //
+    public DeltaThread(Surface S, Coordinator C, int Vstart, int Range) {
+        s = S;
+        c = C;
+        vstart = Vstart;
+        range = Range;
+        if(vstart + range > vertices.length){
+            range = vertices.length-vstart;
+        }
+    }
+}
+
 public class SSSP {
     private static int n = 50;              // default number of vertices
     private static double geom = 1.0;       // default degree of geometric reality
@@ -214,8 +258,7 @@ public class SSSP {
                 if (numThreads == 0) {
                     s.DijkstraSolve();
                 } else {
-                    System.out.println("i suck dick for money");
-                    s.DeltaSolve();
+                    s.DeltaSolve(0, vertices.length);
                 }
             } catch(Coordinator.KilledException e) { }
             long endTime = new Date().getTime();
@@ -235,6 +278,8 @@ class Worker extends Thread {
     private final UI u;
     private final Animation a;
     private final boolean dijkstra;     // Dijkstra = !Delta
+    private final int vstart;
+    private final int range;
 
     // The run() method of a Java Thread is never invoked directly by
     // user code.  Rather, it is called by the Java runtime when user
@@ -255,7 +300,8 @@ class Worker extends Thread {
             if (dijkstra) {
                 s.DijkstraSolve();
             } else {
-                s.DeltaSolve();
+                System.out.println("suck my clean gaping anus");
+                s.DeltaSolve(vstart, range);
             }
             c.unregister();
         } catch(Coordinator.KilledException e) { }
@@ -274,12 +320,17 @@ class Worker extends Thread {
 
     // Constructor
     //
-    public Worker(Surface S, Coordinator C, UI U, Animation A, boolean D) {
+    public Worker(Surface S, Coordinator C, UI U, Animation A, boolean D, int Vstart, int Range) {
         s = S;
         c = C;
         u = U;
         a = A;
         dijkstra = D;
+        vstart = Vstart;
+        range = Range;
+        if(vstart + range > vertices.length){
+            range = vertices.length-vstart;
+        }
     }
 }
 
@@ -639,7 +690,7 @@ class Surface {
 
     // Main solver routine.
     //
-    public void DeltaSolve() throws Coordinator.KilledException {
+    public void DeltaSolve(int vstart, int range) throws Coordinator.KilledException {
         numBuckets = 2 * degree;
         delta = maxCoord / degree;
         // All buckets, together, cover a range of 2 * maxCoord,
@@ -649,7 +700,7 @@ class Surface {
         for (int i = 0; i < numBuckets; ++i) {
             buckets.add(new LinkedHashSet<Vertex>());
         }
-        buckets.get(0).add(vertices[0]);
+        buckets.get(0).add(vertices[vstart]);
         int i = 0;
         for (;;) {
             LinkedList<Vertex> removed = new LinkedList<Vertex>();
@@ -848,17 +899,19 @@ class UI extends JPanel {
             public void actionPerformed(ActionEvent e) {
                 if (state == stopped) {
                     state = running;
-                    // root.setDefaultButton(pauseButton);
-                    // Worker w = new Worker(surface, coordinator,
-                    //                       ui, animation, NT == 0);
+                    root.setDefaultButton(pauseButton);
+                    Worker w = new Worker(surface, coordinator,
+                                          ui, animation, NT == 0);
                     Date d = new Date();
                     startTime = d.getTime();
-                    // w.start();
+                    w.start();
 
-                    for(int i = 0;i<NT;i++){
-                        Worker w = new Worker(surface, coordinator, ui, animation, NT==0);
-                        w.start();
-                    }
+                    // int range = vertices.length/NT;
+
+                    // for(int i = 0;i<NT;i++){
+                    //     Worker w = new Worker(surface, coordinator, ui, animation, NT==0, i*range,range);
+                    //     w.start();
+                    // }
                 } else if (state == paused) {
                     state = running;
                     root.setDefaultButton(pauseButton);
