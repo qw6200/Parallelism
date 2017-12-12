@@ -21,13 +21,42 @@ import javax.swing.*;
 import java.util.*;
 import java.lang.*;
 
-class DeltaThread extends Thread {
+class Parallel{
+
+    private final int numThreads;
+    private final Surface surface;
+    private final Coordinator coordinator;
+    private final int numVertices;
+
+    public Parallel(Surface S, Coordinator C, int NT, int NV){
+        surface = S;
+        coordinator = C;
+        numThreads = NT;
+        numVertices = NV;
+    }
+
+    public void solve(){
+        // does all the work here (equivalent to run button)
+        // create all the workers
+
+        int range = numVertices/numThreads;
+
+        for(int i = 0;i<numThreads;i++){
+            int startindex = i*range;
+            int newrange = startindex + range > numVertices?numVertices-startindex:range;
+            DeltaWorker worker = new DeltaWorker(surface, coordinator, startindex, newrange);
+        }
+    }
+
+}
+
+class DeltaWorker extends Thread {
     private final Surface s;
     private final Coordinator c;
     // private final UI u;
     // private final Animation a;
     // private final boolean dijkstra;     // Dijkstra = !Delta
-    private final int vstart;
+    private final int startIndex;
     private final int range;
 
     // The run() method of a Java Thread is never invoked directly by
@@ -47,21 +76,20 @@ class DeltaThread extends Thread {
         try {
             c.register();
             System.out.println("suck my clean gaping anus");
-            s.DeltaSolve(vstart, range);
+            // s.DeltaSolve(vstart, range);
             c.unregister();
         } catch(Coordinator.KilledException e) { }
     }
 
     // Constructor
     //
-    public DeltaThread(Surface S, Coordinator C, int Vstart, int Range) {
+    public DeltaWorker(Surface S, Coordinator C, int StartIndex, int Range) {
         s = S;
         c = C;
-        vstart = Vstart;
+        startIndex = StartIndex;
         range = Range;
-        if(vstart + range > vertices.length){
-            range = vertices.length-vstart;
-        }
+
+        System.out.print("NEW WORKER: [" + startIndex + ", " + startIndex + range + "]");
     }
 }
 
@@ -220,7 +248,8 @@ public class SSSP {
                         System.out.printf("unselected  %12d %12d %12d %12d %12d\n",
                                           x1, y1, x2, y2, w);
                     }});
-        } else if (an == FULL_ANIMATION) {
+        } else if (an == FULL_ANIMATION) 
+        {
             Surface.EdgeRoutine er = new Surface.EdgeRoutine() {
                 public void run(int x1, int y1, int x2, int y2, boolean dum, long w)
                         throws Coordinator.KilledException {
@@ -254,13 +283,22 @@ public class SSSP {
             // Using terminal I/O rather than graphics.
             // Execute the guts of the run button handler method here.
             long startTime = new Date().getTime();
-            try {
-                if (numThreads == 0) {
+            // try {
+            if (numThreads == 0) {
+                // try{
                     s.DijkstraSolve();
-                } else {
-                    s.DeltaSolve(0, vertices.length);
-                }
-            } catch(Coordinator.KilledException e) { }
+                // } catch(Coordinator.KilledException e){ }
+            } else {
+                // OUR CODE HERE
+                // 1. For numThreads, create workerthreads
+                // 2. Run worker threads with num vertices
+                final Coordinator c = new Coordinator();
+                Parallel parallel = new Parallel(s, c, numThreads, n);
+                parallel.solve();
+                
+                // s.DeltaSolve(0, vertices.length);
+            }
+            // } catch(Coordinator.KilledException e) { }
             long endTime = new Date().getTime();
             System.out.printf("elapsed time: %.3f seconds\n",
                               (double) (endTime-startTime)/1000);
@@ -278,8 +316,6 @@ class Worker extends Thread {
     private final UI u;
     private final Animation a;
     private final boolean dijkstra;     // Dijkstra = !Delta
-    private final int vstart;
-    private final int range;
 
     // The run() method of a Java Thread is never invoked directly by
     // user code.  Rather, it is called by the Java runtime when user
@@ -320,17 +356,12 @@ class Worker extends Thread {
 
     // Constructor
     //
-    public Worker(Surface S, Coordinator C, UI U, Animation A, boolean D, int Vstart, int Range) {
+    public Worker(Surface S, Coordinator C, UI U, Animation A, boolean D) {
         s = S;
         c = C;
         u = U;
         a = A;
         dijkstra = D;
-        vstart = Vstart;
-        range = Range;
-        if(vstart + range > vertices.length){
-            range = vertices.length-vstart;
-        }
     }
 }
 
@@ -393,6 +424,10 @@ class Surface {
             distToSource = Long.MAX_VALUE;
             predecessor = null;
         }
+    }
+
+    public Vertex[] getVertices(){
+        return vertices;
     }
 
     // Distance-based Comparator for use in Dijkstra priority queue.
@@ -905,13 +940,6 @@ class UI extends JPanel {
                     Date d = new Date();
                     startTime = d.getTime();
                     w.start();
-
-                    // int range = vertices.length/NT;
-
-                    // for(int i = 0;i<NT;i++){
-                    //     Worker w = new Worker(surface, coordinator, ui, animation, NT==0, i*range,range);
-                    //     w.start();
-                    // }
                 } else if (state == paused) {
                     state = running;
                     root.setDefaultButton(pauseButton);
