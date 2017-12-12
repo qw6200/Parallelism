@@ -97,12 +97,11 @@ class DeltaWorker extends Thread {
     // c.register() and c.unregister() properly.
     //
     public void run() {
-        // try{
+        try{
             c.register();
             s.DeltaSolveParallel(startIndex, endIndex, parallel);
-            // parallel.hold();
             c.unregister();
-        // } catch(Coordinator.KilledException e){}
+        } catch(Coordinator.KilledException e){}
     }
 
     // Constructor
@@ -753,13 +752,13 @@ class Surface {
         // All buckets, together, cover a range of 2 * maxCoord,
         // which is larger than the weight of any edge, so a relaxation
         // will never wrap all the way around the array.
+
         buckets = new ArrayList<LinkedHashSet<Vertex>>(numBuckets);
         for (int i = 0; i < numBuckets; ++i) {
             buckets.add(new LinkedHashSet<Vertex>());
         }
         buckets.get(0).add(vertices[vStart]);
 
-        System.out.println("hey guys I am the king");
         int i = 0;
         for (;;) {
             LinkedList<Vertex> removed = new LinkedList<Vertex>();
@@ -774,6 +773,7 @@ class Surface {
                 }
             }
             // Now bucket i is empty. Cyclic barrier awaits here!
+            System.out.println("BUCKET NUM: " + i);
             parallel.hold();
 
             requests = findRequests(removed, false);    // heavy relaxations
