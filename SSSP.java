@@ -19,20 +19,30 @@ import java.awt.event.*;
 import java.io.*;
 import javax.swing.*;
 import java.util.*;
+import java.util.concurrent.*;
 import java.lang.*;
 
 class Parallel{
-
     private final int numThreads;
     private final Surface surface;
     private final Coordinator coordinator;
     private final int numVertices;
+    private DeltaWorker[] workers;
+    private CyclicBarrier barrier;
+    private boolean waitbool;
 
     public Parallel(Surface S, Coordinator C, int NT, int NV) {
         surface = S;
         coordinator = C;
         numThreads = NT;
+        workers = new DeltaWorker[numThreads];
         numVertices = NV;
+        barrier = new CyclicBarrier(numThreads, new Runnable(){
+            public void run(){
+                waitbool = false;
+                System.out.println("Barrier continuing!");
+            }
+        });
     }
 
     public void solve() throws Coordinator.KilledException {
@@ -44,11 +54,26 @@ class Parallel{
         for(int i = 0;i<numThreads;i++){
             int startindex = i*range;
             int newrange = startindex + range > numVertices?numVertices-startindex:range;
-            DeltaWorker worker = new DeltaWorker(surface, coordinator, startindex, newrange);
-            worker.run();
+            DeltaWorker worker = new DeltaWorker(surface, coordinator, startindex, newrange, this);
+            workers[i] = worker;
+        }
+
+        for(int i = 0;i<numThreads;i++){
+            workers[i].run();
         }
     }
 
+    public void hold(){
+        if(!waitbool){
+            try{
+                System.out.println("barrier waiting");                
+                barrier.await();
+                waitbool = true;
+            } catch (InterruptedException | BrokenBarrierException e) { 
+                e.printStackTrace();
+            }
+        }
+    }
 }
 
 class DeltaWorker extends Thread {
@@ -60,6 +85,7 @@ class DeltaWorker extends Thread {
     private final int startIndex;
     private final int range;
     private final int endIndex;
+    private final Parallel parallel;
 
 
     // The run() method of a Java Thread is never invoked directly by
@@ -78,16 +104,17 @@ class DeltaWorker extends Thread {
     public void run() {
         try{
             c.register();
-            s.DeltaSolveParallel(startIndex, endIndex);
+            s.DeltaSolveParallel(startIndex, endIndex, parallel);
             c.unregister();
         } catch(Coordinator.KilledException e){}
     }
 
     // Constructor
     //
-    public DeltaWorker(Surface S, Coordinator C, int StartIndex, int Range) {
+    public DeltaWorker(Surface S, Coordinator C, int StartIndex, int Range, Parallel P) {
         s = S;
         c = C;
+        parallel = P;
         startIndex = StartIndex;
         range = Range;
         endIndex = startIndex + range - 1;
@@ -724,7 +751,7 @@ class Surface {
     }
 
     //OUR DELTA SOLVE ROUTINE
-    public void DeltaSolveParallel(int vStart, int vEnd) throws Coordinator.KilledException {
+    public void DeltaSolveParallel(int vStart, int vEnd, Parallel parallel) throws Coordinator.KilledException {
         numBuckets = 2 * degree;
         delta = maxCoord / degree;
         // All buckets, together, cover a range of 2 * maxCoord,
@@ -734,7 +761,7 @@ class Surface {
         for (int i = 0; i < numBuckets; ++i) {
             buckets.add(new LinkedHashSet<Vertex>());
         }
-        buckets.get(0).add(vertices[0]);
+        buckets.get(0).add(vertices[vStart]);
 
         System.out.println("hey guys I am the king");
         int i = 0;
@@ -750,7 +777,9 @@ class Surface {
                     req.relax();
                 }
             }
-            // Now bucket i is empty.
+            // Now bucket i is empty. Cyclic barrier awaits here!
+            parallel.hold();
+
             requests = findRequests(removed, false);    // heavy relaxations
             for (Request req : requests) {
                 req.relax();
