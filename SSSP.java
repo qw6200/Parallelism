@@ -45,6 +45,7 @@ class Parallel{
             int startindex = i*range;
             int newrange = startindex + range > numVertices?numVertices-startindex:range;
             DeltaWorker worker = new DeltaWorker(surface, coordinator, startindex, newrange);
+            worker.run();
         }
     }
 
@@ -58,6 +59,8 @@ class DeltaWorker extends Thread {
     // private final boolean dijkstra;     // Dijkstra = !Delta
     private final int startIndex;
     private final int range;
+    private final int endIndex;
+
 
     // The run() method of a Java Thread is never invoked directly by
     // user code.  Rather, it is called by the Java runtime when user
@@ -73,9 +76,11 @@ class DeltaWorker extends Thread {
     // c.register() and c.unregister() properly.
     //
     public void run() {
+        try{
             c.register();
-            // s.DeltaSolve();
+            s.DeltaSolveParallel(startIndex, endIndex);
             c.unregister();
+        } catch(Coordinator.KilledException e){}
     }
 
     // Constructor
@@ -85,8 +90,9 @@ class DeltaWorker extends Thread {
         c = C;
         startIndex = StartIndex;
         range = Range;
+        endIndex = startIndex + range - 1;
 
-        System.out.print("NEW WORKER: [" + startIndex + ", " + (startIndex + range) + "]");
+        System.out.println("NEW WORKER: [" + startIndex + ", " + (startIndex + range-1) + "], VERTICES: " + s.getVertices());
     }
 }
 
@@ -715,6 +721,51 @@ class Surface {
             }
         }
         return rtn;
+    }
+
+    //OUR DELTA SOLVE ROUTINE
+    public void DeltaSolveParallel(int vStart, int vEnd) throws Coordinator.KilledException {
+        numBuckets = 2 * degree;
+        delta = maxCoord / degree;
+        // All buckets, together, cover a range of 2 * maxCoord,
+        // which is larger than the weight of any edge, so a relaxation
+        // will never wrap all the way around the array.
+        buckets = new ArrayList<LinkedHashSet<Vertex>>(numBuckets);
+        for (int i = 0; i < numBuckets; ++i) {
+            buckets.add(new LinkedHashSet<Vertex>());
+        }
+        buckets.get(0).add(vertices[0]);
+
+        System.out.println("hey guys I am the king");
+        int i = 0;
+        for (;;) {
+            LinkedList<Vertex> removed = new LinkedList<Vertex>();
+            LinkedList<Request> requests;
+            while (buckets.get(i).size() > 0) {
+                requests = findRequests(buckets.get(i), true);  // light relaxations
+                // Move all vertices from bucket i to removed list.
+                removed.addAll(buckets.get(i));
+                buckets.set(i, new LinkedHashSet<Vertex>());
+                for (Request req : requests) {
+                    req.relax();
+                }
+            }
+            // Now bucket i is empty.
+            requests = findRequests(removed, false);    // heavy relaxations
+            for (Request req : requests) {
+                req.relax();
+            }
+            // Find next nonempty bucket.
+            int j = i;
+            do {
+                j = (j + 1) % numBuckets;
+            } while (j != i && buckets.get(j).size() == 0);
+            if (i == j) {
+                // Cycled all the way around; we're done
+                break;  // for (;;) loop
+            }
+            i = j;
+        }
     }
 
     // Main solver routine.
