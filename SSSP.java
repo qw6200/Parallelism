@@ -27,9 +27,8 @@ class Parallel{
     private final Surface surface;
     private final Coordinator coordinator;
     private final int numVertices;
+    private final CyclicBarrier barrier;
     private DeltaWorker[] workers;
-    private CyclicBarrier barrier;
-    private boolean waitbool;
 
     public Parallel(Surface S, Coordinator C, int NT, int NV) {
         surface = S;
@@ -39,7 +38,6 @@ class Parallel{
         numVertices = NV;
         barrier = new CyclicBarrier(numThreads, new Runnable(){
             public void run(){
-                waitbool = false;
                 System.out.println("Barrier continuing!");
             }
         });
@@ -59,19 +57,16 @@ class Parallel{
         }
 
         for(int i = 0;i<numThreads;i++){
-            workers[i].run();
+            workers[i].start();
         }
     }
 
     public void hold(){
-        if(!waitbool){
-            try{
-                System.out.println("barrier waiting");                
-                barrier.await();
-                waitbool = true;
-            } catch (InterruptedException | BrokenBarrierException e) { 
-                e.printStackTrace();
-            }
+        try{
+            System.out.println("barrier waiting");                
+            barrier.await();
+        } catch (InterruptedException | BrokenBarrierException e) { 
+            e.printStackTrace();
         }
     }
 }
@@ -102,11 +97,12 @@ class DeltaWorker extends Thread {
     // c.register() and c.unregister() properly.
     //
     public void run() {
-        try{
+        // try{
             c.register();
             s.DeltaSolveParallel(startIndex, endIndex, parallel);
+            // parallel.hold();
             c.unregister();
-        } catch(Coordinator.KilledException e){}
+        // } catch(Coordinator.KilledException e){}
     }
 
     // Constructor
