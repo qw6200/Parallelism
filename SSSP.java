@@ -19,104 +19,7 @@ import java.awt.event.*;
 import java.io.*;
 import javax.swing.*;
 import java.util.*;
-import java.util.concurrent.*;
 import java.lang.*;
-
-class Parallel{
-    private final int numThreads;
-    private final Surface surface;
-    private final Coordinator coordinator;
-    private final int numVertices;
-    private final CyclicBarrier barrier;
-    private DeltaWorker[] workers;
-
-    public Parallel(Surface S, Coordinator C, int NT, int NV) {
-        surface = S;
-        coordinator = C;
-        numThreads = NT;
-        workers = new DeltaWorker[numThreads];
-        numVertices = NV;
-        barrier = new CyclicBarrier(numThreads, new Runnable(){
-            public void run(){
-                System.out.println("Barrier continuing!");
-            }
-        });
-    }
-
-    public void solve() throws Coordinator.KilledException {
-        // does all the work here (equivalent to run button)
-        // create all the workers
-
-        int range = numVertices/numThreads;
-
-        for(int i = 0;i<numThreads;i++){
-            int startindex = i*range;
-            int newrange = startindex + range > numVertices?numVertices-startindex:range;
-            DeltaWorker worker = new DeltaWorker(surface, coordinator, startindex, newrange, this);
-            workers[i] = worker;
-        }
-
-        for(int i = 0;i<numThreads;i++){
-            workers[i].start();
-        }
-    }
-
-    public void hold(){
-        try{
-            System.out.println("barrier waiting");                
-            barrier.await();
-        } catch (InterruptedException | BrokenBarrierException e) { 
-            e.printStackTrace();
-        }
-    }
-}
-
-class DeltaWorker extends Thread {
-    private final Surface s;
-    private final Coordinator c;
-    // private final UI u;
-    // private final Animation a;
-    // private final boolean dijkstra;     // Dijkstra = !Delta
-    private final int startIndex;
-    private final int range;
-    private final int endIndex;
-    private final Parallel parallel;
-
-
-    // The run() method of a Java Thread is never invoked directly by
-    // user code.  Rather, it is called by the Java runtime when user
-    // code calls start().
-    //
-    // The run() method of a worker thread *must* begin by calling
-    // c.register() and end by calling c.unregister().  These allow the
-    // user interface (via the Coordinator) to pause and terminate
-    // workers.  Note how the worker is set up to catch KilledException.
-    // In the process of unwinding back to here we'll cleanly and
-    // automatically release any monitor locks.  If you create new kinds
-    // of workers (as part of a parallel solver), make sure they call
-    // c.register() and c.unregister() properly.
-    //
-    public void run() {
-        try{
-            c.register();
-            s.DeltaSolveParallel(startIndex, endIndex, parallel);
-            c.unregister();
-        } catch(Coordinator.KilledException e){}
-    }
-
-    // Constructor
-    //
-    public DeltaWorker(Surface S, Coordinator C, int StartIndex, int Range, Parallel P) {
-        s = S;
-        c = C;
-        parallel = P;
-        startIndex = StartIndex;
-        range = Range;
-        endIndex = startIndex + range - 1;
-
-        System.out.println("NEW WORKER: [" + startIndex + ", " + (startIndex + range-1) + "], VERTICES: " + s.getVertices());
-    }
-}
 
 public class SSSP {
     private static int n = 50;              // default number of vertices
@@ -273,8 +176,7 @@ public class SSSP {
                         System.out.printf("unselected  %12d %12d %12d %12d %12d\n",
                                           x1, y1, x2, y2, w);
                     }});
-        } else if (an == FULL_ANIMATION) 
-        {
+        } else if (an == FULL_ANIMATION) {
             Surface.EdgeRoutine er = new Surface.EdgeRoutine() {
                 public void run(int x1, int y1, int x2, int y2, boolean dum, long w)
                         throws Coordinator.KilledException {
@@ -308,18 +210,11 @@ public class SSSP {
             // Using terminal I/O rather than graphics.
             // Execute the guts of the run button handler method here.
             long startTime = new Date().getTime();
-            // try {
-
-            try{
+            try {
                 if (numThreads == 0) {
                     s.DijkstraSolve();
                 } else {
-                // OUR CODE HERE
-                // 1. For numThreads, create workerthreads
-                // 2. Run worker threads with num vertices
-                final Coordinator c = new Coordinator();
-                Parallel parallel = new Parallel(s, c, numThreads, n);
-                parallel.solve();
+                    s.DeltaSolve();
                 }
             } catch(Coordinator.KilledException e) { }
             long endTime = new Date().getTime();
@@ -445,23 +340,6 @@ class Surface {
             neighbors = new Vector<Edge>();
             distToSource = Long.MAX_VALUE;
             predecessor = null;
-        }
-    }
-
-    public Vertex[] getVertices(){
-        return vertices;
-    }
-
-    // Distance-based Comparator for use in Dijkstra priority queue.
-    // Note: this comparator imposes orderings that are inconsistent with equals.
-    // More specifically: v1.equals(v2) => compare(v1, v2) == 0, but it is
-    // not necessarily the case that compare(v1, v2) == 0 => v1.equals(v2).
-    //
-    private class DistanceComparator implements Comparator<Vertex> {
-        public int compare(Vertex v1, Vertex v2) {
-            if (v1.distToSource < v2.distToSource) return -1;
-            if (v2.distToSource < v1.distToSource) return 1;
-            return 0;
         }
     }
 
@@ -659,33 +537,56 @@ class Surface {
     // *************************
     // Find shortest paths via Dijkstra's algorithm.
     //
+    // Dijkstra's algorithm assumes a priority queue with a log-time decreaseKey
+    // method, which Java's PriorityQueue class doesn't support (and can't easily
+    // support, because it doesn't export references to its internal tree nodes.
+    // The workaround here, due to Jackson Abascal, adds an extra distance field,
+    // "weight," which is equal to v.distToSource when v is first inserted in the
+    // PQ, but keeps its value even when v.distToSoure is reduced.  When we want
+    // to reduce a key, we simply insert the vertex again, and leave the old
+    // reference in place.  The old one has a weight that's worse than
+    // v.distToSource, allowing us to skip over it.
+    //
+    class WeightedVertex implements Comparable<WeightedVertex> {
+        Vertex v;
+        long weight;
+
+        public WeightedVertex(Vertex n) {
+            v = n;
+            weight = v.distToSource;
+        }
+
+        public int compareTo(WeightedVertex other) {
+            if (weight < other.weight) return -1;
+            if (weight == other.weight) return 0;
+            return 1;
+        }
+    }
+
     public void DijkstraSolve() throws Coordinator.KilledException {
-        PriorityQueue<Vertex> pq = new PriorityQueue<Vertex>(n, new DistanceComparator());
-        Vertex v = vertices[0];
-        for (Edge e : v.neighbors) {
-            Vertex o = e.other(v);
-            o.distToSource = e.weight;
-            o.predecessor = e;
-        }
-        for (int i = 1; i < n; i++) {   // don't bother adding source
-            pq.add(vertices[i]);
-        }
+        PriorityQueue<WeightedVertex> pq =
+            new PriorityQueue<WeightedVertex>((n * 12) / 10);
+            // Leave some room for extra umremoved entries.
+        vertices[0].distToSource = 0;
+        // All other vertices still have maximal distToSource, as set by constructor.
+        pq.add(new WeightedVertex(vertices[0]));
         while (!pq.isEmpty()) {
-            v = pq.poll();
-            if (v.distToSource == Long.MAX_VALUE) {
-                // this is a disconnected vertex, as are all that remain
-                break;
+            WeightedVertex wv = pq.poll();
+            Vertex v = wv.v;
+            if (v.predecessor != null) {
+                v.predecessor.select();
             }
-            v.predecessor.select();
+            if (wv.weight != v.distToSource) {
+                // This is a left-over pq entry.
+                continue;
+            }
             for (Edge e : v.neighbors) {
                 Vertex o = e.other(v);
                 long altDist = v.distToSource + e.weight;
-                // relax (o, altDist)
                 if (altDist < o.distToSource) {
-                    pq.remove(o);
                     o.distToSource = altDist;
                     o.predecessor = e;
-                    pq.add(o);
+                    pq.add(new WeightedVertex(o));
                 }
             }
         }
@@ -743,54 +644,6 @@ class Surface {
             }
         }
         return rtn;
-    }
-
-    //OUR DELTA SOLVE ROUTINE
-    public void DeltaSolveParallel(int vStart, int vEnd, Parallel parallel) throws Coordinator.KilledException {
-        numBuckets = 2 * degree;
-        delta = maxCoord / degree;
-        // All buckets, together, cover a range of 2 * maxCoord,
-        // which is larger than the weight of any edge, so a relaxation
-        // will never wrap all the way around the array.
-
-        buckets = new ArrayList<LinkedHashSet<Vertex>>(numBuckets);
-        for (int i = 0; i < numBuckets; ++i) {
-            buckets.add(new LinkedHashSet<Vertex>());
-        }
-        buckets.get(0).add(vertices[vStart]);
-
-        int i = 0;
-        for (;;) {
-            LinkedList<Vertex> removed = new LinkedList<Vertex>();
-            LinkedList<Request> requests;
-            while (buckets.get(i).size() > 0) {
-                requests = findRequests(buckets.get(i), true);  // light relaxations
-                // Move all vertices from bucket i to removed list.
-                removed.addAll(buckets.get(i));
-                buckets.set(i, new LinkedHashSet<Vertex>());
-                for (Request req : requests) {
-                    req.relax();
-                }
-            }
-            // Now bucket i is empty. Cyclic barrier awaits here!
-            System.out.println("BUCKET NUM: " + i);
-            parallel.hold();
-
-            requests = findRequests(removed, false);    // heavy relaxations
-            for (Request req : requests) {
-                req.relax();
-            }
-            // Find next nonempty bucket.
-            int j = i;
-            do {
-                j = (j + 1) % numBuckets;
-            } while (j != i && buckets.get(j).size() == 0);
-            if (i == j) {
-                // Cycled all the way around; we're done
-                break;  // for (;;) loop
-            }
-            i = j;
-        }
     }
 
     // Main solver routine.
