@@ -4,8 +4,8 @@ clear
 echo "Compile Data"
 javac SSSP.java
 
-vertices=100
-seed=0
+vertices=40000
+seed=3
 
 echo "1 thread"
 echo "dijkstra:"
@@ -14,44 +14,30 @@ echo "delta step:"
 java SSSP -s $seed -t 1 -n $vertices
 
 echo "2 threads"
-echo "dijkstra:"
-java SSSP -s $seed -n $vertices
 echo "delta step:"
 java SSSP -s $seed -t 2 -n $vertices
 
 echo "3 threads"
-echo "dijkstra:"
-java SSSP -s $seed -n $vertices
 echo "delta step:"
 java SSSP -s $seed -t 3 -n $vertices
 
 echo "4 threads"
-echo "dijkstra:"
-java SSSP -s $seed -n $vertices
 echo "delta step:"
 java SSSP -s $seed -t 4 -n $vertices
 
 echo "6 threads"
-echo "dijkstra:"
-java SSSP -s $seed -n $vertices
 echo "delta step:"
 java SSSP -s $seed -t 6 -n $vertices
 
 echo "8 threads"
-echo "dijkstra:"
-java SSSP -s $seed -n $vertices
 echo "delta step:"
 java SSSP -s $seed -t 8 -n $vertices
 
 echo "12 threads"
-echo "dijkstra:"
-java SSSP -s $seed -n $vertices
 echo "delta step:"
 java SSSP -s $seed -t 12 -n $vertices
 
 echo "16 threads"
-echo "dijkstra:"
-java SSSP -s $seed -n $vertices
 echo "delta step:"
 java SSSP -s $seed -t 16 -n $vertices
 
@@ -62,14 +48,10 @@ echo "delta step:"
 java SSSP -s $seed -t 24 -n $vertices
 
 echo "32 threads"
-echo "dijkstra:"
-java SSSP -s $seed -n $vertices
 echo "delta step:"
 java SSSP -s $seed -t 32 -n $vertices
 
 echo "48 threads"
-echo "dijkstra:"
-java SSSP -s $seed -n $vertices
 echo "delta step:"
 java SSSP -s $seed -t 48 -n $vertices
 
