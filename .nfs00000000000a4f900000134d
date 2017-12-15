@@ -4,8 +4,8 @@ clear
 echo "Compile Data"
 javac SSSP.java
 
-vertices=200
-seed=0
+vertices=40000
+seed=3
 
 echo "1 thread"
 echo "dijkstra:"
