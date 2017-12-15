@@ -18,8 +18,11 @@ import java.awt.*;
 import java.awt.event.*;
 import java.io.*;
 import javax.swing.*;
+import java.util.concurrent.*;
 import java.util.*;
 import java.lang.*;
+import java.nio.file.*;
+
 
 public class SSSP {
     private static int n = 50;              // default number of vertices
@@ -214,7 +217,7 @@ public class SSSP {
                 if (numThreads == 0) {
                     s.DijkstraSolve();
                 } else {
-                    s.DeltaSolve();
+                    s.DeltaSolveP(numThreads);
                 }
             } catch(Coordinator.KilledException e) { }
             long endTime = new Date().getTime();
@@ -254,7 +257,7 @@ class Worker extends Thread {
             if (dijkstra) {
                 s.DijkstraSolve();
             } else {
-                s.DeltaSolve();
+                // s.DeltaSolve();
             }
             c.unregister();
         } catch(Coordinator.KilledException e) { }
@@ -286,6 +289,8 @@ class Worker extends Thread {
 // Vertex 0 is the source.
 //
 class Surface {
+
+    public static final boolean print = false;
     // all X and Y coordinates will be in the range [0..2^28)
     public static final int minCoord = 0;
     public static final int maxCoord = 1024*1024*256;
@@ -590,6 +595,14 @@ class Surface {
                 }
             }
         }
+
+        String output = "";
+        for(Vertex v : vertices){
+            output += "(" + v.xCoord + "," + v.yCoord + ") : " + v.distToSource + "\n";
+        }
+        try{
+            Files.write(Paths.get("./DijkstraResult.txt"), output.getBytes());
+        } catch(IOException e){System.err.println("unable to print to file DijkstraResult.txt");}
     }
 
     // *************************
@@ -597,6 +610,9 @@ class Surface {
 
     int numBuckets;
     int delta;
+    WorkerP[] workers;
+    CyclicBarrier barrier;
+
     private ArrayList<LinkedHashSet<Vertex>> buckets;
     // This is an ArrayList instead of a plain array to avoid the generic
     // array creation error message that stems from Java erasure.
@@ -607,22 +623,29 @@ class Surface {
         private Vertex v;
         private Edge e;
 
+        //just a getter for the vertex, so we can check which worker
+        //it belongs to
+        public Vertex getVertex(){
+            return v;
+        }
+
         // To relax a request is to consider whether the e might provide
         // v with a better path back to the source.
         //
-        public void relax() throws Coordinator.KilledException {
+        public void relax(WorkerP worker) throws Coordinator.KilledException {
             Vertex o = e.other(v);
             long altDist = o.distToSource + e.weight;
+            if(print) System.out.println("relaxing " + v + "with altDist " + altDist);            
             if (altDist < v.distToSource) {
                 // Yup; better path home.
-                buckets.get((int)((v.distToSource / delta) % numBuckets)).remove(v);
+                worker.buckets.get((int)((v.distToSource / delta) % numBuckets)).remove(v);
                 v.distToSource = altDist;
                 if (v.predecessor != null) {
                     v.predecessor.unselect();
                 }
                 v.predecessor = e;
                 e.select();
-                buckets.get((int)((altDist / delta) % numBuckets)).add(v);
+                worker.buckets.get((int)((altDist / delta) % numBuckets)).add(v);
             }
         }
 
@@ -646,49 +669,227 @@ class Surface {
         return rtn;
     }
 
-    // Main solver routine.
-    //
-    public void DeltaSolve() throws Coordinator.KilledException {
-        numBuckets = 2 * degree;
-        delta = maxCoord / degree;
-        // All buckets, together, cover a range of 2 * maxCoord,
-        // which is larger than the weight of any edge, so a relaxation
-        // will never wrap all the way around the array.
-        buckets = new ArrayList<LinkedHashSet<Vertex>>(numBuckets);
-        for (int i = 0; i < numBuckets; ++i) {
-            buckets.add(new LinkedHashSet<Vertex>());
-        }
-        buckets.get(0).add(vertices[0]);
-        int i = 0;
-        for (;;) {
-            LinkedList<Vertex> removed = new LinkedList<Vertex>();
-            LinkedList<Request> requests;
-            while (buckets.get(i).size() > 0) {
-                requests = findRequests(buckets.get(i), true);  // light relaxations
-                // Move all vertices from bucket i to removed list.
-                removed.addAll(buckets.get(i));
-                buckets.set(i, new LinkedHashSet<Vertex>());
+    class WorkerP extends Thread{
+
+        private HashSet<Vertex> ownedVertices;  
+        public ConcurrentLinkedQueue<Request> queue;
+        public ArrayList<LinkedHashSet<Vertex>> buckets;
+        public int nextBucket;
+        public int barrierCounter;
+            
+
+        public void run(){
+            if(print)System.out.println(getName() + " started");            
+
+            try{
+            coord.register();
+            // code here            
+
+            for (int i=0;i<numBuckets;i++) {
+                if(print) System.out.println(getName() + " on bucket: " + i);
+
+                LinkedList<Vertex> removed = new LinkedList<Vertex>();
+                LinkedList<Request> requests;
+
+                do {
+                    if(print) System.out.println(getName() + " starting loop");
+                    requests = findRequests(buckets.get(i), true);  // light relaxations
+                    // Move all vertices from bucket i to removed list.
+                    removed.addAll(buckets.get(i));
+                    buckets.set(i, new LinkedHashSet<Vertex>());
+                    for (Request req : requests) {
+                        if(ownsVertex(req.getVertex())) req.relax(this);
+                        else messageRequest(req);
+                    }
+
+
+                    holdBarrier();
+                    satisfyRequests();
+                    holdBarrier(); // let all the threads finish satisfying before moving on
+
+                } while(isActiveBucket(i));
+
+                
+                holdBarrier();
+                
+                // Now bucket i is empty.
+                requests = findRequests(removed, false);    // heavy relaxations
                 for (Request req : requests) {
-                    req.relax();
+                    if(ownsVertex(req.getVertex())) req.relax(this);
+                    else messageRequest(req);
+                }
+
+                holdBarrier();
+                if(print) System.out.println(getName() + " reached last barrier");
+                satisfyRequests();        
+                holdBarrier(); //lets all the threads finish satisfying requests before determining if there are any active buckets
+            }
+
+            if(print) System.out.println(getName() + " successfully broke");
+
+            //---------
+            coord.unregister();
+            } catch(Coordinator.KilledException e){}
+        }
+
+        public void printBucketSizes(){
+            String s = "{";
+            for(int i=0;i<buckets.size();i++){
+                s += buckets.get(i).size() + ",";
+            }
+            s += "}";
+            System.out.println(getName() + ": " + s);
+        }
+
+        public void messageRequest(Request req){
+            for(WorkerP worker : workers){
+                if(worker.ownsVertex(req.getVertex())){
+                    // if(print) System.out.println(getName() + " messaging request for (" +req.getVertex().xCoord + "," + req.getVertex().yCoord + ") to " + worker.getName());                                    
+                    worker.queue.add(req);
                 }
             }
-            // Now bucket i is empty.
-            requests = findRequests(removed, false);    // heavy relaxations
-            for (Request req : requests) {
-                req.relax();
+        }
+
+        public void satisfyRequests(){
+            try{
+                while(!queue.isEmpty()){
+                    Request req = queue.poll();
+                    // if(print) System.out.println(getName() + " satisfying request for (" +req.getVertex().xCoord + "," + req.getVertex().yCoord + ")");                
+                    req.relax(this);
+                }
+            } catch(Coordinator.KilledException e){}
+        }
+
+        public void holdBarrier(){
+            try{
+                barrier.await();
+            }catch(InterruptedException | BrokenBarrierException k){}
+        }
+
+        public boolean isActiveBucket(int i){
+            for(WorkerP worker : workers){
+                if(worker.buckets.get(i).size() > 0 ||!worker.queue.isEmpty()) return true;
             }
-            // Find next nonempty bucket.
-            int j = i;
-            do {
-                j = (j + 1) % numBuckets;
-            } while (j != i && buckets.get(j).size() == 0);
-            if (i == j) {
-                // Cycled all the way around; we're done
-                break;  // for (;;) loop
+            return false;
+        }
+
+        public boolean ownsVertex(Vertex v){
+            if(ownedVertices.contains(v)) return true;
+            return false;
+        }
+
+        public WorkerP(int numThreads, int threadnum, int nBuckets){
+            super("Worker" + threadnum);
+            barrierCounter = 0;
+            nextBucket = 0;
+            ownedVertices = new HashSet<>();
+            queue = new ConcurrentLinkedQueue<>();
+
+            // create the buckets
+            buckets = new ArrayList<LinkedHashSet<Vertex>>(nBuckets);
+            for (int i = 0; i < numBuckets; ++i) {
+                buckets.add(new LinkedHashSet<Vertex>());
             }
-            i = j;
+
+            // calculate the range of vertices each worker owns
+            int range = n/numThreads;
+            int start = threadnum*range;
+            if(threadnum == numThreads-1){
+                range = range + n%numThreads;
+            }
+
+            // if it owns the origin, add it to the first bucket
+            if(start == 0) buckets.get(0).add(vertices[0]);
+
+            
+            // print info
+            // System.out.println(getName() + " created owning vertices " + start + ".." + (start+range-1));
+
+            // add the vertices to the vertex hashmap
+            for(int i = start;i<start+range;i++){
+                // System.out.println(getName() + " owns: (" + vertices[i].xCoord + "," + vertices[i].yCoord + ")");
+                ownedVertices.add(vertices[i]);
+            }
+            
         }
     }
+
+    public void DeltaSolveP(int numThreads){
+        numBuckets = 2 * degree;
+        delta = maxCoord / degree;
+        workers = new WorkerP[numThreads];        
+        barrier = new CyclicBarrier(numThreads);
+
+        // System.out.println("NUM BUCKETS: " + numBuckets);
+        // System.out.println("Barrier created with: " + numThreads + " parties");
+
+        for(int i=0;i<numThreads;i++){
+            WorkerP worker = new WorkerP(numThreads,i,numBuckets);
+            workers[i] = worker;
+        }
+
+        for(int i=0;i<workers.length;i++){
+            workers[i].start();
+        }
+
+        for(int i=0;i<workers.length;i++){
+            try{
+                workers[i].join();
+            } catch(InterruptedException e){}
+        }
+
+        String output = "";
+        for(Vertex v : vertices){
+            output += "(" + v.xCoord + "," + v.yCoord + ") : " + v.distToSource + "\n";
+        }
+        try{
+            Files.write(Paths.get("./DeltaResult.txt"), output.getBytes());
+        } catch(IOException e){System.err.println("unable to print to file DeltaResult.txt");}
+    }
+
+    // Main solver routine.
+    //
+    // public void DeltaSolve() throws Coordinator.KilledException {
+    //     numBuckets = 2 * degree;
+    //     delta = maxCoord / degree;
+    //     // All buckets, together, cover a range of 2 * maxCoord,
+    //     // which is larger than the weight of any edge, so a relaxation
+    //     // will never wrap all the way around the array.
+    //     buckets = new ArrayList<LinkedHashSet<Vertex>>(numBuckets);
+    //     for (int i = 0; i < numBuckets; ++i) {
+    //         buckets.add(new LinkedHashSet<Vertex>());
+    //     }
+    //     buckets.get(0).add(vertices[0]);
+    //     int i = 0;
+    //     for (;;) {
+    //         LinkedList<Vertex> removed = new LinkedList<Vertex>();
+    //         LinkedList<Request> requests;
+    //         while (buckets.get(i).size() > 0) {
+    //             requests = findRequests(buckets.get(i), true);  // light relaxations
+    //             // Move all vertices from bucket i to removed list.
+    //             removed.addAll(buckets.get(i));
+    //             buckets.set(i, new LinkedHashSet<Vertex>());
+    //             for (Request req : requests) {
+    //                 req.relax();
+    //             }
+    //         }
+    //         // Now bucket i is empty.
+    //         requests = findRequests(removed, false);    // heavy relaxations
+    //         for (Request req : requests) {
+    //             req.relax();
+    //         }
+    //         // Find next nonempty bucket.
+    //         int j = i;
+    //         do {
+    //             j = (j + 1) % numBuckets;
+    //         } while (j != i && buckets.get(j).size() == 0);
+    //         if (i == j) {
+    //             // Cycled all the way around; we're done
+    //             break;  // for (;;) loop
+    //         }
+    //         i = j;
+    //     }
+    // }
 
     // End of Delta stepping.
     // *************************

@@ -1,7 +1,15 @@
 #!/bin/bash
 clear
-echo "Compiling Program"
+
+echo "Compile Data"
 javac SSSP.java
-java SSSP -n 100
-java SSSP -t 2 -n 100
-rm *.class
+
+vertices=20
+
+echo "2 threads"
+echo "dijkstra:"
+java SSSP -n $vertices
+echo "delta step:"
+java SSSP -t 2 -n $vertices
+
+echo "Completed"
